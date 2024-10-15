@@ -1,0 +1,150 @@
+import socket
+import threading
+import asyncio
+from tkinter import *
+from tkinter import scrolledtext, filedialog, messagebox, ttk
+from concurrent.futures import ThreadPoolExecutor
+import ipaddress
+
+
+# Function to scan a port asynchronously
+async def scan_port_async(ip, port, timeout):
+    scanner = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    scanner.settimeout(timeout)
+    try:
+        result = scanner.connect_ex((ip, port))
+        if result == 0:
+            try:
+                service = socket.getservbyport(port)
+            except:
+                service = "Unknown service"
+            return port, service, True
+        else:
+            return port, "", False
+    except:
+        return port, "", False
+    finally:
+        scanner.close()
+
+
+# Asynchronous function to scan a range of ports
+async def scan_ports_async(ip, start_port, end_port, timeout, text_area, progress_var):
+    open_ports = []
+    tasks = []
+    total_ports = end_port - start_port + 1
+
+    for port in range(start_port, end_port + 1):
+        tasks.append(scan_port_async(ip, port, timeout))
+
+    for i, task in enumerate(asyncio.as_completed(tasks)):
+        port, service, is_open = await task
+        if is_open:
+            open_ports.append((port, service))
+            text_area.insert(END, f"Port {port} is open (Service: {service})\n")
+        text_area.see(END)  # Auto-scroll to the end
+        progress_var.set(int((i + 1) / total_ports * 100))
+
+    if not open_ports:
+        text_area.insert(END, "No open ports found.\n")
+
+    return open_ports
+
+
+# Function to start the scan
+def start_scan(ip, start_port, end_port, timeout, text_area, progress_var):
+    try:
+        text_area.delete(1.0, END)  # Clear previous results
+        text_area.insert(END, f"Scanning {ip} from port {start_port} to {end_port}...\n")
+        progress_var.set(0)
+        asyncio.run(scan_ports_async(ip, start_port, end_port, timeout, text_area, progress_var))
+    except Exception as e:
+        text_area.insert(END, f"Error: {str(e)}\n")
+
+
+# Validate IP address
+def is_valid_ip(ip):
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+
+# Function to export scan results to a file
+def export_results(text_area):
+    results = text_area.get(1.0, END).strip()
+    if results:
+        file = filedialog.asksaveasfile(mode="w", defaultextension=".txt", filetypes=[("Text files", "*.txt")])
+        if file:
+            file.write(results)
+            file.close()
+            messagebox.showinfo("Export", "Results exported successfully!")
+    else:
+        messagebox.showwarning("Export", "No results to export.")
+
+
+# GUI setup
+def create_gui():
+    # Create the main window
+    window = Tk()
+    window.title("Advanced Port Scanner")
+    window.geometry('550x500')
+
+    # Create and place the widgets
+    Label(window, text="Target IP Address:").grid(row=0, column=0, padx=10, pady=10, sticky=W)
+    ip_entry = Entry(window, width=20)
+    ip_entry.grid(row=0, column=1, padx=10, pady=10)
+
+    Label(window, text="Start Port:").grid(row=1, column=0, padx=10, pady=10, sticky=W)
+    start_port_entry = Entry(window, width=10)
+    start_port_entry.grid(row=1, column=1, padx=10, pady=10)
+
+    Label(window, text="End Port:").grid(row=2, column=0, padx=10, pady=10, sticky=W)
+    end_port_entry = Entry(window, width=10)
+    end_port_entry.grid(row=2, column=1, padx=10, pady=10)
+
+    Label(window, text="Timeout (seconds):").grid(row=3, column=0, padx=10, pady=10, sticky=W)
+    timeout_entry = Entry(window, width=10)
+    timeout_entry.grid(row=3, column=1, padx=10, pady=10)
+    timeout_entry.insert(0, "1")  # Default timeout
+
+    # Create a scrollable text area to display results
+    text_area = scrolledtext.ScrolledText(window, width=60, height=15, wrap=WORD)
+    text_area.grid(row=4, column=0, columnspan=3, padx=10, pady=10)
+
+    # Create a progress bar
+    progress_var = IntVar()
+    progress_bar = ttk.Progressbar(window, length=400, variable=progress_var)
+    progress_bar.grid(row=5, column=0, columnspan=2, padx=10, pady=10)
+
+    # Function to trigger scanning process when button is clicked
+    def on_scan():
+        ip = ip_entry.get()
+        if not is_valid_ip(ip):
+            messagebox.showerror("Invalid Input", "Please enter a valid IP address.")
+            return
+        try:
+            start_port = int(start_port_entry.get())
+            end_port = int(end_port_entry.get())
+            timeout = float(timeout_entry.get())
+            if start_port < 1 or end_port > 65535 or start_port > end_port:
+                messagebox.showerror("Invalid Input", "Please enter valid port numbers (1-65535).")
+                return
+            start_scan(ip, start_port, end_port, timeout, text_area, progress_var)
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Please enter valid numbers for ports and timeout.")
+
+    # Create a button to start the scan
+    scan_button = Button(window, text="Start Scan", command=on_scan)
+    scan_button.grid(row=6, column=0, pady=10)
+
+    # Create a button to export the scan results
+    export_button = Button(window, text="Export Results", command=lambda: export_results(text_area))
+    export_button.grid(row=6, column=1, pady=10)
+
+    # Start the GUI main loop
+    window.mainloop()
+
+
+if __name__ == "__main__":
+    create_gui()
